@@ -189,10 +189,10 @@ jobs:
         message_id: ${{ steps.notify_start.outputs.message_id }}
         file-path: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
         message: |
-          <b>${{ job.status == 'success' && '✅ Kernel Build Succeeded' || '❌ Kernel Build Failed' }}</b><br>
-          <b>Build Title:</b> ${{ env.BUILD_TITLE }}<br>
-          <b>Device Codename:</b> ${{ env.CODENAME }}<br>
-          <b>Elapsed Time:</b> ${{ steps.build.outputs.elapsed_time }} seconds<br>
+          <b>${{ job.status == 'success' && '✅ Kernel Build Succeeded' || '❌ Kernel Build Failed' }}</b>
+          <b>Build Title:</b> ${{ env.BUILD_TITLE }}
+          <b>Device Codename:</b> ${{ env.CODENAME }}
+          <b>Elapsed Time:</b> ${{ steps.build.outputs.elapsed_time }} seconds
           ${{ github.event.inputs.UPLOAD_TO_RELEASE == 'true' && format('<b>Download Link:</b> <a href="{1}/{2}/releases/tag/{0}">Download {0}</a>', format('{0}-{1}', env.CODENAME, github.event.inputs.VERSION), github.server_url, github.repository) || '' }}
         TELEGRAM_CHAT_ID: '2123961513'
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
