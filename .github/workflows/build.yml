@@ -22,6 +22,10 @@ on:
         description: 'Upload to release'
         type: boolean
         default: true
+      VERSION:
+        description: 'Kernel Version'
+        default: 'v1.0'
+        required: true
 
 jobs:
   build:
@@ -41,6 +45,7 @@ jobs:
         echo "Custom Build Title: ${{ env.BUILD_TITLE }}"
         echo "Kernel Tree: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}"
         echo "Codename: ${{ env.CODENAME }}"
+        echo "Version: ${{ github.event.inputs.VERSION }}"
         echo "Upload to Release: ${{ github.event.inputs.UPLOAD_TO_RELEASE }}"
 
     - name: Notify build start
@@ -152,23 +157,19 @@ jobs:
         if [ -e "dtbo.img" ]; then
           cp -f dtbo.img AnyKernel3
         fi
-        name=z0kernel-${{ github.event.inputs.CODENAME }}-$(date +%Y%m%d-%H%M%S).zip
+        name=zenkernel-${{ github.event.inputs.VERSION }}-${{ github.event.inputs.CODENAME }}.zip
         cd AnyKernel3
         zip -q -r $name *
         mv $name ../
         echo "zipname=$name" >> $GITHUB_OUTPUT
-
-    - name: Generate build date
-      id: build_date
-      run: echo "build_date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
     - name: Upload to release
       if: github.event.inputs.UPLOAD_TO_RELEASE == 'true'
       uses: softprops/action-gh-release@v2
       with:
         files: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
-        name: ${{ github.event.inputs.CODENAME }}-${{ steps.build_date.outputs.build_date }}
-        tag_name: ${{ github.event.inputs.CODENAME }}-${{ steps.build_date.outputs.build_date }}
+        name: ${{ github.event.inputs.CODENAME }}-${{ github.event.inputs.VERSION }}
+        tag_name: ${{ github.event.inputs.CODENAME }}-${{ github.event.inputs.VERSION }}
         body: |
           **Kernel Build Succeeded** ✅
           **${{ env.BUILD_TITLE }}**
@@ -192,7 +193,7 @@ jobs:
           <b>Build Title:</b> ${{ env.BUILD_TITLE }}<br>
           <b>Device Codename:</b> ${{ env.CODENAME }}<br>
           <b>Elapsed Time:</b> ${{ steps.build.outputs.elapsed_time }} seconds<br>
-          ${{ github.event.inputs.UPLOAD_TO_RELEASE == 'true' && format('<b>Download Link:</b> <a href="{1}/{2}/releases/tag/{0}">Download {0}</a>', format('{0}-{1}', env.CODENAME, steps.build_date.outputs.build_date), github.server_url, github.repository) || '' }}
+          ${{ github.event.inputs.UPLOAD_TO_RELEASE == 'true' && format('<b>Download Link:</b> <a href="{1}/{2}/releases/tag/{0}">Download {0}</a>', format('{0}-{1}', env.CODENAME, github.event.inputs.VERSION), github.server_url, github.repository) || '' }}
         TELEGRAM_CHAT_ID: '2123961513'
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
 
