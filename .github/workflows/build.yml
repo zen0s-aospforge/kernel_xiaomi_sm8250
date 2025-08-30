@@ -12,7 +12,7 @@ on:
         required: true
       KERNEL_TREE_BRANCH:
         description: 'Kernel Tree Branch'
-        default: 'staging'
+        default: 'release'
         required: true
       CODENAME:
         description: 'Phone Codename'
