@@ -1,0 +1,41 @@
+name: 'Notify Telegram'
+description: 'Sends or edits Telegram notifications for build status'
+
+inputs:
+  message:
+    description: 'The message to send'
+    required: true
+  TELEGRAM_CHAT_ID:
+    description: 'Telegram Chat ID'
+    required: true
+  TELEGRAM_TOKEN:
+    description: 'Telegram Bot Token'
+    required: true
+  message_id:
+    description: 'Optional ID of an existing message to edit'
+    required: false
+  file-path:
+    description: 'Path to an optional file to send (only for new messages)'
+    required: false
+  status:
+    description: 'Status of the build'
+    required: false
+
+outputs:
+  message_id:
+    description: "The ID of the sent or edited message"
+    value: ${{ steps.send_notification.outputs.message_id }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Send or Edit Telegram Notification
+      id: send_notification
+      uses: appleboy/telegram-action@v0.1.1
+      with:
+        to: ${{ inputs.TELEGRAM_CHAT_ID }}
+        token: ${{ inputs.TELEGRAM_TOKEN }}
+        message: ${{ inputs.message }}
+        format: html
+        message_id: ${{ inputs.message_id }}
+        document: ${{ inputs.message_id == '' && inputs.file-path || '' }}

@@ -1,0 +1,208 @@
+name: alioth-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_TITLE:
+        description: 'Custom Build Title'
+        required: false
+      KERNEL_TREE:
+        description: 'Kernel Tree'
+        default: 'https://github.com/zen0s-aospforge/kernel_xiaomi_sm8250.git'
+        required: true
+      KERNEL_TREE_BRANCH:
+        description: 'Kernel Tree Branch'
+        default: 'staging'
+        required: true
+      CODENAME:
+        description: 'Phone Codename'
+        default: 'alioth'
+        required: true
+      UPLOAD_TO_RELEASE:
+        description: 'Upload to release'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    env:
+      CODENAME: ${{ github.event.inputs.CODENAME }}
+      BUILD_TITLE: ${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Display inputs
+      run: |
+        echo "Custom Build Title: ${{ env.BUILD_TITLE }}"
+        echo "Kernel Tree: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}"
+        echo "Codename: ${{ env.CODENAME }}"
+        echo "Upload to Release: ${{ github.event.inputs.UPLOAD_TO_RELEASE }}"
+
+    - name: Notify build start
+      id: notify_start
+      uses: ./.github/action
+      with:
+        status: 'start'
+        message: |
+          🚀 *Kernel Build Started*
+          *Build Title*: ${{ env.BUILD_TITLE }}
+          *Device Codename*: ${{ env.CODENAME }}
+          *Workflow File*: ${{ github.workflow }}.yml
+          [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        TELEGRAM_CHAT_ID: '2123961513'
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+
+    - name: Initialize workspace
+      id: workspace
+      run: |
+        mkdir -p workspace
+        cd workspace
+        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+        echo "start_time=$(date +%s)" >> $GITHUB_OUTPUT
+
+    - name: Cache Clang toolchain
+      id: cache-clang
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.workspace.outputs.workspace-folder }}/clang
+        key: clang-${{ hashFiles('**/clang-version.txt') }}
+
+    - name: Set up build environment
+      id: tools
+      working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+      run: |
+        if [ ! -d "clang" ]; then
+          sudo apt-get update -y
+          sudo apt-get install -y flex bison libncurses-dev libssl-dev bc build-essential git
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/4d2864f08ff2c290563fb903a5156e0504620bbe/clang-r563880c.tar.gz -O clang.tar.gz
+          mkdir clang
+          tar -xf clang.tar.gz -C clang
+          echo "4d2864f08ff2c290563fb903a5156e0504620bbe" > clang-version.txt
+        fi
+        echo "tools-folder=$(pwd)/clang" >> $GITHUB_OUTPUT
+
+    - name: Cache Kernel source
+      id: cache-kernel
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.workspace.outputs.workspace-folder }}/kernel_tree
+        key: kernel-${{ github.event.inputs.KERNEL_TREE }}-${{ github.event.inputs.KERNEL_TREE_BRANCH }}-${{ github.sha }}
+
+    - name: Clone or update kernel
+      id: kernel
+      working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+      run: |
+        if [ ! -d "kernel_tree" ]; then
+          echo "Cloning kernel repository..."
+          git clone --recursive --depth=1 ${{ github.event.inputs.KERNEL_TREE }} -b ${{ github.event.inputs.KERNEL_TREE_BRANCH }} kernel_tree
+        else
+          echo "Updating kernel repository..."
+          cd kernel_tree
+          git fetch --depth=1 origin ${{ github.event.inputs.KERNEL_TREE_BRANCH }}
+          git reset --hard origin/${{ github.event.inputs.KERNEL_TREE_BRANCH }}
+          git submodule update --init --recursive --depth=1
+        fi
+        echo "kernel-folder=$(pwd)/kernel_tree" >> $GITHUB_OUTPUT
+
+    - name: Build kernel
+      id: build
+      working-directory: ${{ steps.kernel.outputs.kernel-folder }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+        export ARCH=arm64 SUBARCH=ARM64 KBUILD_BUILD_USER=zenzer0s KBUILD_BUILD_HOST=Github
+        make O=out vendor/alioth_defconfig PATH="${{ steps.tools.outputs.tools-folder }}/bin:$PATH"
+        make O=out CC=clang -j$(nproc --all) PATH="${{ steps.tools.outputs.tools-folder }}/bin:$PATH" CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1
+        echo "elapsed_time=$(($(date +%s)-${{ steps.workspace.outputs.start_time }}))" >> $GITHUB_OUTPUT
+
+    - name: Notify build progress
+      uses: ./.github/action
+      with:
+        status: 'building'
+        message_id: ${{ steps.notify_start.outputs.message_id }}
+        message: |
+          🔄 *Kernel Build In Progress*
+          *Build Title*: ${{ env.BUILD_TITLE }}
+          *Device Codename*: ${{ env.CODENAME }}
+          *Status*: Build completed, preparing package...
+          *Elapsed Time*: ${{ steps.build.outputs.elapsed_time }} seconds
+          [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        TELEGRAM_CHAT_ID: '2123961513'
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+
+    - name: Package with AnyKernel3
+      if: success()
+      id: anykernel
+      working-directory: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot
+      run: |
+        rm -rf AnyKernel3
+        git clone --recursive --depth=1 https://github.com/zen0s-aospforge/Anykernel3.git -b main AnyKernel3
+        if [ -e "Image.gz" ]; then
+          cp -f Image.gz AnyKernel3
+        fi
+        if [ -e "dtb.img" ]; then
+          mv -f dtb.img dtb
+          cp -f dtb AnyKernel3/dtb
+        fi
+        if [ -e "dtbo.img" ]; then
+          cp -f dtbo.img AnyKernel3
+        fi
+        name=z0kernel-${{ github.event.inputs.CODENAME }}-$(date +%Y%m%d-%H%M%S).zip
+        cd AnyKernel3
+        zip -q -r $name *
+        mv $name ../
+        echo "zipname=$name" >> $GITHUB_OUTPUT
+
+    - name: Generate build date
+      id: build_date
+      run: echo "build_date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
+    - name: Upload to release
+      if: github.event.inputs.UPLOAD_TO_RELEASE == 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
+        name: ${{ github.event.inputs.CODENAME }}-${{ steps.build_date.outputs.build_date }}
+        tag_name: ${{ github.event.inputs.CODENAME }}-${{ steps.build_date.outputs.build_date }}
+        body: |
+          **Kernel Build Succeeded** ✅
+          **${{ env.BUILD_TITLE }}**
+          **Kernel successfully built!**, took ${{ steps.build.outputs.elapsed_time }} seconds.
+          **📱 Device Codename**: `${{ github.event.inputs.CODENAME }}`
+          **Kernel tree**: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}
+          **Action**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Workflow File**: ${{ github.workflow }}.yml
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Notify build result
+      if: always() # This will run even if the build fails
+      uses: ./.github/action
+      with:
+        status: ${{ job.status }}
+        message_id: ${{ steps.notify_start.outputs.message_id }}
+        file-path: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
+        message: |
+          <b>${{ job.status == 'success' && '✅ Kernel Build Succeeded' || '❌ Kernel Build Failed' }}</b><br>
+          <b>Build Title:</b> ${{ env.BUILD_TITLE }}<br>
+          <b>Device Codename:</b> ${{ env.CODENAME }}<br>
+          <b>Elapsed Time:</b> ${{ steps.build.outputs.elapsed_time }} seconds<br>
+          ${{ github.event.inputs.UPLOAD_TO_RELEASE == 'true' && format('<b>Download Link:</b> <a href="{1}/{2}/releases/tag/{0}">Download {0}</a>', format('{0}-{1}', env.CODENAME, steps.build_date.outputs.build_date), github.server_url, github.repository) || '' }}
+        TELEGRAM_CHAT_ID: '2123961513'
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+
+    - name: Upload artifacts
+      if: success() && github.event.inputs.UPLOAD_TO_RELEASE != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-artifacts
+        path: |
+          ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image.gz
+          ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/dtb
+          ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/dtbo.img
+          ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
